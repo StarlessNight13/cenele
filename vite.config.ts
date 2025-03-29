@@ -26,9 +26,9 @@ export default defineConfig({
         author: "Darkless",
         version: "1.0.1",
         updateURL:
-          "https://github.com/StarlessNight13/cenele-reader/releases/latest/download/cenele.user.js",
+          "https://github.com/StarlessNight13/cenele/releases/latest/download/cenele.user.js",
         downloadURL:
-          "https://github.com/StarlessNight13/cenele-reader/releases/latest/download/cenele.user.js",
+          "https://github.com/StarlessNight13/cenele/releases/latest/download/cenele.user.js",
       },
     }),
   ],

@@ -127,3 +127,7 @@
 div:has(> div > div > div > div > .adblock_title):not(.wrap) {
   display: none;
 }
+html,
+body {
+  overflow-x: hidden;
+}
