@@ -1,4 +1,4 @@
-import { IoClose, IoCog } from "solid-icons/io";
+import { IoClose, IoCog, IoMoon, IoSunny } from "solid-icons/io";
 import {
   createEffect,
   createSignal,
@@ -35,54 +35,69 @@ import {
   SliderThumb,
   SliderTrack,
 } from "./components/ui/slider";
+import { Toggle } from "./components/ui/toggle";
 import { fetchChapter } from "./lib/fetch";
-import { debounce } from "./lib/utils";
 import { URLManager } from "./lib/URLManager";
+import { debounce } from "./lib/utils";
 
-interface chapter {
+// Types
+interface Chapter {
   id: number;
   value: string;
   text: string;
   selected: boolean;
 }
 
-interface readerProps {
-  availableChapters: chapter[];
+interface ReaderProps {
+  availableChapters: Chapter[];
   novelUrl: string;
   initialChapterIndex: number;
-  initialChapterData: chapterData;
+  initialChapterData: ChapterData;
 }
 
-interface BgOptions {
-  white: string;
-  sepia: string;
-  dark: string;
-}
-
-interface chapterData {
-  id: number; // ID from data attribute (might be missing)
+interface ChapterData {
+  id: number;
   uri: string;
   title: string;
   content: string;
 }
 
-const backgroundColors: BgOptions = {
+interface UserStyle {
+  fontSize: number[];
+  lineHeight: number[];
+  fontFamily: string;
+  backgroundColor: keyof typeof BACKGROUND_COLORS;
+  theme: string;
+}
+
+// Constants
+const BACKGROUND_COLORS = {
   white: "bg-white text-black",
   sepia: "bg-amber-50 text-stone-800",
   dark: "bg-gray-900 text-gray-100",
 };
 
-const ChapterReader = (props: readerProps) => {
-  const [fontSize, setFontSize] = createSignal([16]);
-  const [fontFamily, setFontFamily] = createSignal("serif");
-  const [bgColor, setBgColor] = createSignal<keyof BgOptions>("white");
+const SCROLL_TRIGGER_PERCENTAGE = 60;
+const SCROLL_DEBOUNCE_MS = 100;
+const DEFAULT_USER_STYLE: UserStyle = {
+  fontSize: [16],
+  lineHeight: [1.7],
+  fontFamily: "serif",
+  backgroundColor: "white",
+  theme: "light",
+};
+
+// Components
+const ChapterReader = (props: ReaderProps) => {
+  // State management
+  const [userStyle, setUserStyle] = createSignal<UserStyle>({
+    ...DEFAULT_USER_STYLE,
+  });
   const [showSettings, setShowSettings] = createSignal(false);
-  const [lineHeight, setLineHeight] = createSignal([1.7]);
-  const [nextChpaterIndex, setNextChpaterIndex] = createSignal(
+  const [nextChapterIndex, setNextChapterIndex] = createSignal(
     props.initialChapterIndex + 1
   );
-
-  const [chapters, setChapters] = createSignal<chapterData[]>([
+  const [chapters, setChapters] = createSignal<ChapterData[]>([
     props.initialChapterData,
   ]);
   const [lastChapter, setLastChapter] = createSignal(false);
@@ -93,45 +108,56 @@ const ChapterReader = (props: readerProps) => {
   } | null>(null);
 
   let currentChapterRef: HTMLDivElement | undefined;
-  createEffect(() => {
+
+  // User style getters for convenience
+  const fontSize = () => userStyle().fontSize;
+  const lineHeight = () => userStyle().lineHeight;
+  const fontFamily = () => userStyle().fontFamily;
+  const bgColor = () => userStyle().backgroundColor;
+  const theme = () => userStyle().theme;
+
+  // User style setters that update the entire style object
+  const updateUserStyle = <K extends keyof UserStyle>(
+    key: K,
+    value: UserStyle[K]
+  ) => {
+    setUserStyle((prev) => ({ ...prev, [key]: value }));
+  };
+
+  // Load user preferences on mount
+  const loadUserPreferences = () => {
     const colorSchema = document.body.getAttribute("data-schema");
+    document.body.classList.add("dark");
     if (colorSchema === "dark") {
-      document.body.classList.add("dark");
-      setBgColor("dark");
+      updateUserStyle("backgroundColor", "dark");
+      updateUserStyle("theme", "dark");
     } else {
-      document.body.classList.remove("dark");
-      setBgColor("white");
+      updateUserStyle("theme", "light");
     }
-    const userStyle = JSON.parse(localStorage.getItem("userStyle") ?? "{}");
-    if (userStyle) {
-      setFontSize(userStyle.fontSize);
-      setLineHeight(userStyle.lineHeight);
-      setFontFamily(userStyle.fontFamily);
-      setBgColor(userStyle.backgroundColor);
+
+    try {
+      const savedStyle = JSON.parse(localStorage.getItem("userStyle") || "{}");
+      if (Object.keys(savedStyle).length) {
+        setUserStyle((prevStyle: any) => ({
+          ...prevStyle,
+          ...savedStyle,
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to load user preferences:", e);
     }
-  });
+  };
 
-  createEffect(() => {
-    const userStyle = {
-      fontSize: fontSize(),
-      lineHeight: lineHeight(),
-      fontFamily: fontFamily(),
-      backgroundColor: bgColor(),
-    };
-    localStorage.setItem("userStyle", JSON.stringify(userStyle));
-  }, [fontSize, lineHeight, fontFamily, bgColor]);
-
-  const handleScroll = debounce(() => {
-    if (lastChapter()) return;
-    const scrollPercentage = calculateScrollPercentage();
-    // Load next chapter when we're 60% through the current one
-
-    if (scrollPercentage > 60 && !fetching()) {
-      // Fetch the next chapter
-      loadNextChapter();
+  // Save user preferences when they change
+  const saveUserPreferences = () => {
+    try {
+      localStorage.setItem("userStyle", JSON.stringify(userStyle()));
+    } catch (e) {
+      console.error("Failed to save user preferences:", e);
     }
-  }, 100);
+  };
 
+  // Calculate how far down the user has scrolled through the current chapter
   const calculateScrollPercentage = () => {
     const el = currentChapterRef;
     if (!el) return 0;
@@ -150,265 +176,157 @@ const ChapterReader = (props: readerProps) => {
     const scrolledPastHeight = Math.max(0, -rect.top);
     const elementHeight = rect.height;
 
-    if (elementHeight === 0) return 0;
-
-    return Math.min(100, (scrolledPastHeight / elementHeight) * 100);
+    return elementHeight === 0
+      ? 0
+      : Math.min(100, (scrolledPastHeight / elementHeight) * 100);
   };
 
+  // Handle scroll events
+  const handleScroll = debounce(() => {
+    if (lastChapter() || fetching()) return;
+
+    const scrollPercentage = calculateScrollPercentage();
+    if (scrollPercentage > SCROLL_TRIGGER_PERCENTAGE) {
+      loadNextChapter();
+    }
+  }, SCROLL_DEBOUNCE_MS);
+
+  // Fetch and load the next chapter
+  const loadNextChapter = async () => {
+    if (fetching() || lastChapter()) return;
+    if (
+      nextChapterIndex() === props.availableChapters.length ||
+      nextChapterIndex() > props.availableChapters.length ||
+      nextChapterIndex() < 0
+    ) {
+      setLastChapter(true);
+      return;
+    }
+    setFetching(true);
+    const chapterToFetch = props.availableChapters[nextChapterIndex()];
+
+    try {
+      const newChapter = await fetchChapter({
+        url: chapterToFetch.value,
+        title: chapterToFetch.text,
+      });
+
+      if (newChapter) {
+        updateChapters(newChapter);
+        setNextChapterIndex(nextChapterIndex() + 1);
+      } else {
+        setLastChapter(true);
+        setScrollAnchorInfo(null);
+      }
+    } catch (error) {
+      console.error("Failed to fetch next chapter:", error);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  // Update chapters and handle scroll preservation
+  const updateChapters = (newChapter: ChapterData) => {
+    setChapters((prevChapters) => {
+      if (prevChapters.length >= 3) {
+        // If removing the first chapter, anchor to the second chapter
+        const anchorChapter = prevChapters[1];
+        const anchorElement = document.getElementById(
+          `chapter-${anchorChapter.id}`
+        );
+
+        if (anchorElement) {
+          const scrollOffset = window.scrollY - anchorElement.offsetTop;
+          setScrollAnchorInfo({
+            id: anchorChapter.id,
+            offset: scrollOffset,
+          });
+        } else {
+          console.warn(
+            "Could not find anchor element for scroll preservation."
+          );
+          setScrollAnchorInfo(null);
+        }
+
+        // Remove first chapter, add the new one
+        return [...prevChapters.slice(1), newChapter];
+      } else {
+        // Not removing chapters yet, just append
+        setScrollAnchorInfo(null);
+        return [...prevChapters, newChapter];
+      }
+    });
+  };
+
+  // Restore scroll position after chapters update
+  const restoreScrollPosition = () => {
+    const anchorInfo = scrollAnchorInfo();
+    if (!anchorInfo) return;
+
+    queueMicrotask(() => {
+      const anchorElement = document.getElementById(`chapter-${anchorInfo.id}`);
+      if (anchorElement) {
+        const newScrollY = anchorElement.offsetTop + anchorInfo.offset;
+        window.scrollTo({ top: newScrollY, behavior: "instant" });
+      } else {
+        console.warn(
+          `Scroll anchor element chapter-${anchorInfo.id} not found.`
+        );
+      }
+      setScrollAnchorInfo(null);
+    });
+  };
+
+  // Setup effects and event handlers
   onMount(() => {
+    loadUserPreferences();
     window.addEventListener("scroll", handleScroll);
-    new URLManager(); // Initialize the URL Manager
+    new URLManager();
+
     onCleanup(() => window.removeEventListener("scroll", handleScroll));
   });
 
-  // Effect to restore scroll position after chapters update
-  createEffect(
-    on(
-      chapters,
-      () => {
-        const anchorInfo = scrollAnchorInfo();
-        if (anchorInfo) {
-          // Use queueMicrotask to wait for Solid's batching & DOM update
-          queueMicrotask(() => {
-            const anchorElement = document.getElementById(
-              `chapter-${anchorInfo.id}`
-            );
-            if (anchorElement) {
-              const newScrollY = anchorElement.offsetTop + anchorInfo.offset;
-              console.log(
-                `Restoring scroll to: ${newScrollY} (Anchor ID: ${anchorInfo.id}, Top: ${anchorElement.offsetTop}, Offset: ${anchorInfo.offset})`
-              );
-              window.scrollTo({ top: newScrollY, behavior: "instant" }); // Use 'instant' to avoid visible jump
-            } else {
-              console.warn(
-                `Scroll anchor element chapter-${anchorInfo.id} not found after update.`
-              );
-            }
-            setScrollAnchorInfo(null); // Clear anchor info after restoring
-          });
-        }
-      },
-      { defer: true }
-    )
-  ); // defer: true ensures it runs after the initial render potentially caused by setting chapters
+  // Handle effect for user preferences
+  createEffect(() => {
+    saveUserPreferences();
+  });
 
-  const loadNextChapter = async () => {
-    if (fetching() || lastChapter()) return;
+  // Effect to restore scroll position
+  createEffect(on(chapters, restoreScrollPosition, { defer: true }));
 
-    setFetching(true);
-    const chapterToFetch = props.availableChapters[nextChpaterIndex()];
-    const newChapter = await fetchChapter({
-      url: chapterToFetch.value,
-      title: chapterToFetch.text,
-    });
-
-    if (newChapter) {
-      setChapters((prevChapters) => {
-        // --- Scroll Preservation Logic ---
-        let anchorId: number | null = null;
-        let scrollOffset = 0;
-
-        if (prevChapters.length >= 3) {
-          // If removing the first chapter, anchor to the second chapter
-          const anchorChapter = prevChapters[1]; // The chapter that will become the first
-          anchorId = anchorChapter.id;
-          const anchorElement = document.getElementById(`chapter-${anchorId}`);
-          if (anchorElement) {
-            scrollOffset = window.scrollY - anchorElement.offsetTop;
-            console.log(
-              `Setting scroll anchor: ID=${anchorId}, Offset=${scrollOffset}, ScrollY=${window.scrollY}, AnchorTop=${anchorElement.offsetTop}`
-            );
-            setScrollAnchorInfo({ id: anchorId, offset: scrollOffset });
-          } else {
-            console.warn(
-              "Could not find anchor element for scroll preservation."
-            );
-            setScrollAnchorInfo(null); // Reset if anchor not found
-          }
-          // Prepare the new list: remove the first, add the new one
-          return [...prevChapters.slice(1), newChapter];
-        } else {
-          // Not removing chapters yet, just append
-          setScrollAnchorInfo(null); // No scroll adjustment needed
-          return [...prevChapters, newChapter];
-        }
-      });
-      setNextChpaterIndex(nextChpaterIndex() + 1);
-    } else {
-      setLastChapter(true); // No more chapters found
-      setScrollAnchorInfo(null); // No scroll adjustment needed
-    }
-
-    setFetching(false);
-  };
-
+  // Render the Reader UI
   return (
-    <div class={"min-h-screen flex flex-col "}>
-      {/*  Header */}
-      <header class="sticky top-0 z-10 border-b p-4 backdrop-blur-sm bg-opacity-80 flex justify-between items-center gap-2">
-        <Button
-          size="icon"
-          aria-label="Settings"
-          onclick={() => setShowSettings(true)}
-        >
-          <IoCog />
-          <span class="sr-only">Settings</span>
-        </Button>
+    <div class={"min-h-screen flex flex-col " + theme()}>
+      {/* Header */}
+      <ReaderHeader
+        title={chapters()[0].title}
+        onSettingsClick={() => setShowSettings(true)}
+      />
 
-        <div>
-          <h1>{chapters()[0].title}</h1>
-        </div>
-        <div>
-          <Button size="icon" aria-label="Close">
-            <IoClose />
-            <span class="sr-only">Close</span>
-          </Button>
-        </div>
-      </header>
+      {/* Settings Dialog */}
+      <SettingsDialog
+        open={showSettings()}
+        onOpenChange={setShowSettings}
+        userStyle={userStyle()}
+        onStyleChange={updateUserStyle}
+      />
 
-      {/*  Settings Dialog */}
-      <Dialog open={showSettings()} onOpenChange={setShowSettings}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>اعدادات المستخدم</DialogTitle>
-            <div class="flex items-center gap-4 flex-col sm:fex-row my-4">
-              <div class="flex flex-col gap-1 w-full">
-                <span>
-                  <span>حجم الخط </span>
-                  <span class="text-xs text-gray-500"> {fontSize()[0]}px</span>
-                </span>
-                <Slider
-                  value={fontSize()}
-                  onChange={(e) => setFontSize(e)}
-                  maxValue={50}
-                  minValue={12}
-                >
-                  <SliderTrack>
-                    <SliderFill />
-                    <SliderThumb />
-                  </SliderTrack>
-                </Slider>
-              </div>
-              <div class="flex flex-col gap-1 w-full">
-                <span>
-                  <span>الخط </span>
-                  <span class="text-xs text-gray-500">{fontFamily()}</span>
-                </span>
-                <DropdownMenu>
-                  <DropdownMenuTrigger as={Button<"button">}>
-                    {fontFamily()}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    <DropdownMenuGroup>
-                      <DropdownMenuGroupLabel>الخط</DropdownMenuGroupLabel>
-                      <DropdownMenuRadioGroup
-                        value={fontFamily()}
-                        onChange={setFontFamily}
-                      >
-                        <DropdownMenuRadioItem value="serif">
-                          سيريف
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="sans">
-                          سانس
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="mono">
-                          مونو
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-
-              <div class="flex flex-col gap-1 w-full">
-                <span>
-                  <span>ارتفاع السطر </span>
-                  <span class="text-xs text-gray-500">{lineHeight()}</span>
-                </span>
-                <Slider
-                  value={lineHeight()}
-                  onChange={(e) => setLineHeight(e)}
-                  maxValue={5}
-                  minValue={1}
-                  step={0.1}
-                >
-                  <SliderTrack>
-                    <SliderFill />
-                    <SliderThumb />
-                  </SliderTrack>
-                </Slider>
-              </div>
-
-              <div class="flex flex-col gap-1 w-full">
-                <span> الخلفية </span>
-                <DropdownMenu>
-                  <DropdownMenuTrigger as={Button<"button">}>
-                    {bgColor()}
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    <DropdownMenuGroup>
-                      <DropdownMenuGroupLabel>الخلفية</DropdownMenuGroupLabel>
-                      <DropdownMenuRadioGroup
-                        value={bgColor()}
-                        onChange={setBgColor}
-                      >
-                        <DropdownMenuRadioItem value="white">
-                          ابيض
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="sepia">
-                          البنية
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="dark">
-                          المظلم
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </div>
-          </DialogHeader>
-        </DialogContent>
-      </Dialog>
-
-      {/*  Main Content */}
+      {/* Main Content */}
       <main
         style={{
-          "--line-height": `${lineHeight()}`,
-          "--fontSize": `${fontSize()}px`,
+          "--line-height": `${lineHeight()[0]}`,
+          "--fontSize": `${fontSize()[0]}px`,
         }}
+        class={`${fontFamily()}`}
       >
         <For each={chapters()}>
           {(chapter) => (
-            <Card
-              id={`chapter-${chapter.id}`}
-              data-url={chapter.uri}
-              class={
-                backgroundColors[bgColor()] +
-                " rounded-none sm:rounded sm:m-2 chapter-container"
-              }
-            >
-              <CardHeader class="border-b hover:bg-accent">
-                <a href={chapter.uri}>{chapter.title}</a>
-              </CardHeader>
-              <CardContent
-                innerHTML={chapter.content}
-                class="flex flex-col "
-                style={{
-                  "line-height": "var(--line-height)",
-                  "font-size": `var(--fontSize)`,
-                }}
-                ref={currentChapterRef}
-              />
-              <CardFooter>
-                <Button variant="link">
-                  <a href={chapter.uri}>
-                    <span class="sr-only">Open in new tab</span>
-                    <span>{chapter.title}</span>
-                  </a>
-                </Button>
-              </CardFooter>
-            </Card>
+            <ChapterCard
+              chapter={chapter}
+              backgroundColor={BACKGROUND_COLORS[bgColor()]}
+              theme={theme()}
+              ref={currentChapterRef}
+            />
           )}
         </For>
       </main>
@@ -417,5 +335,229 @@ const ChapterReader = (props: readerProps) => {
     </div>
   );
 };
+
+// Header Component
+const ReaderHeader = (props: {
+  title: string;
+  onSettingsClick: () => void;
+}) => (
+  <header class="sticky top-0 z-10 border-b p-4 backdrop-blur-sm bg-opacity-80 flex justify-between items-center gap-2">
+    <Button size="icon" aria-label="Settings" onclick={props.onSettingsClick}>
+      <IoCog />
+      <span class="sr-only">Settings</span>
+    </Button>
+
+    <div>
+      <h1>{props.title}</h1>
+    </div>
+    <div>
+      <Button
+        size="icon"
+        aria-label="Close"
+        onclick={() => {
+          localStorage.setItem("chapterReaderEnabled", "false");
+          location.reload();
+        }}
+      >
+        <IoClose />
+        <span class="sr-only">Close</span>
+      </Button>
+    </div>
+  </header>
+);
+
+// Settings Dialog Component
+const SettingsDialog = (props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  userStyle: UserStyle;
+  onStyleChange: <K extends keyof UserStyle>(
+    key: K,
+    value: UserStyle[K]
+  ) => void;
+}) => (
+  <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>اعدادات المستخدم</DialogTitle>
+        <div class="flex items-center gap-4 flex-col sm:fex-row my-4">
+          {/* Font Size Setting */}
+          <SettingSlider
+            label="حجم الخط"
+            value={props.userStyle.fontSize}
+            suffix="px"
+            min={12}
+            max={50}
+            onChange={(value) => props.onStyleChange("fontSize", value)}
+          />
+
+          {/* Font Family Setting */}
+          <div class="flex flex-col gap-1 w-full">
+            <span>
+              <span>الخط </span>
+              <span class="text-xs text-gray-500">
+                {props.userStyle.fontFamily}
+              </span>
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger as={Button<"button">}>
+                {props.userStyle.fontFamily}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuGroup>
+                  <DropdownMenuGroupLabel>الخط</DropdownMenuGroupLabel>
+                  <DropdownMenuRadioGroup
+                    value={props.userStyle.fontFamily}
+                    onChange={(value) =>
+                      props.onStyleChange("fontFamily", value)
+                    }
+                  >
+                    <DropdownMenuRadioItem value="serif">
+                      سيريف
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="sans">
+                      سانس
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="mono">
+                      مونو
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Line Height Setting */}
+          <SettingSlider
+            label="ارتفاع السطر"
+            value={props.userStyle.lineHeight}
+            min={1}
+            max={5}
+            step={0.1}
+            onChange={(value) => props.onStyleChange("lineHeight", value)}
+          />
+
+          {/* Background Color Setting */}
+          <div class="flex flex-col gap-1 w-full">
+            <span>الخلفية</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger as={Button<"button">}>
+                {props.userStyle.backgroundColor}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuGroup>
+                  <DropdownMenuGroupLabel>الخلفية</DropdownMenuGroupLabel>
+                  <DropdownMenuRadioGroup
+                    value={props.userStyle.backgroundColor}
+                    onChange={(value) =>
+                      props.onStyleChange(
+                        "backgroundColor",
+                        value as keyof typeof BACKGROUND_COLORS
+                      )
+                    }
+                  >
+                    <DropdownMenuRadioItem value="white">
+                      ابيض
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="sepia">
+                      البنية
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="dark">
+                      المظلم
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div class="flex flex-col gap-1 w-full">
+            <span>الثيم</span>
+            <div>
+              <Toggle
+                onclick={() =>
+                  props.onStyleChange(
+                    "theme",
+                    props.userStyle.theme === "dark" ? "light" : "dark"
+                  )
+                }
+                variant="outline"
+              >
+                {props.userStyle.theme === "dark" ? <IoMoon /> : <IoSunny />}
+              </Toggle>
+            </div>
+          </div>
+        </div>
+      </DialogHeader>
+    </DialogContent>
+  </Dialog>
+);
+
+// Setting Slider Component
+const SettingSlider = (props: {
+  label: string;
+  value: number[];
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  onChange: (value: number[]) => void;
+}) => (
+  <div class="flex flex-col gap-1 w-full">
+    <span>
+      <span>{props.label} </span>
+      <span class="text-xs text-gray-500">
+        {props.value[0]}
+        {props.suffix ?? ""}
+      </span>
+    </span>
+    <Slider
+      value={props.value}
+      onChange={props.onChange}
+      maxValue={props.max}
+      minValue={props.min}
+      step={props.step}
+    >
+      <SliderTrack>
+        <SliderFill />
+        <SliderThumb />
+      </SliderTrack>
+    </Slider>
+  </div>
+);
+
+// Chapter Card Component
+const ChapterCard = (props: {
+  chapter: ChapterData;
+  backgroundColor: string;
+  ref?: HTMLDivElement;
+  theme: string;
+}) => (
+  <Card
+    id={`chapter-${props.chapter.id}`}
+    data-url={props.chapter.uri}
+    class={`${props.backgroundColor} rounded-none sm:rounded sm:m-2 chapter-container`}
+  >
+    <CardHeader class="border-b hover:bg-accent">
+      <a href={props.chapter.uri}>{props.chapter.title}</a>
+    </CardHeader>
+    <CardContent
+      innerHTML={props.chapter.content}
+      class="flex flex-col"
+      style={{
+        "line-height": "var(--line-height)",
+        "font-size": "var(--fontSize)",
+      }}
+      ref={props.ref}
+    />
+    <CardFooter>
+      <Button variant="link">
+        <a href={props.chapter.uri}>
+          <span class="sr-only">Open in new tab</span>
+          <span>{props.chapter.title}</span>
+        </a>
+      </Button>
+    </CardFooter>
+  </Card>
+);
 
 export default ChapterReader;

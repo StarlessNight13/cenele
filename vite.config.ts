@@ -24,7 +24,7 @@ export default defineConfig({
         icon: "https://www.google.com/s2/favicons?sz=64&domain=cenele.com",
         namespace: "darkless/cenele",
         author: "Darkless",
-        version: "1.0.0",
+        version: "1.0.1",
         updateURL:
           "https://github.com/StarlessNight13/cenele-reader/releases/latest/download/cenele.user.js",
         downloadURL:

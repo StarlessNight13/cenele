@@ -1,6 +1,5 @@
 @import "tailwindcss";
 
-
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -123,4 +122,8 @@
 
 .ltr {
   direction: ltr;
+}
+
+div:has(> div > div > div > div > .adblock_title):not(.wrap) {
+  display: none;
 }

@@ -1,6 +1,7 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
 import ChapterReader from "./ChapterPage"; // Assuming ChapterPage.tsx exports ChapterReader
+import { Button } from "./components/ui/button";
 import "./index.css";
 
 // Define the shape of the chapter data we pass to the component
@@ -186,9 +187,29 @@ function extractInitialChapterData(): InitialChapterData {
  */
 function initializeChapterReader(): void {
   const body = document.body;
-  if (!body.classList.contains("reading-manga")) {
-    // Only run on designated manga reading pages
-    return;
+  const enabled = localStorage.getItem("chapterReaderEnabled") === "true";
+  if (!body.classList.contains("reading-manga") || !enabled) {
+    console.log("Chapter reader disabled or not on reading page.");
+    render(
+      () => (
+        <div>
+          <Button
+            onclick={() => {
+              localStorage.setItem("chapterReaderEnabled", "true");
+              initializeChapterReader();
+            }}
+          >
+            <span>تفعيل وضع القارئ</span>
+          </Button>
+        </div>
+      ),
+      (() => {
+        const container = document.createElement("div");
+        document.getElementById("reader-settings")?.appendChild(container);
+        return container;
+      })()
+    );
+    return; // Bail out if disabled
   }
 
   console.log("Manga reading page detected. Initializing SolidJS reader...");
